@@ -1,0 +1,797 @@
+{
+    "name": "Offer Letter Automation - Production",
+    "nodes": [
+        {
+            "parameters": {
+                "rule": {
+                    "interval": [
+                        {
+                            "field": "minutes",
+                            "minutesInterval": 2
+                        }
+                    ]
+                }
+            },
+            "id": "a1000001-0001-4001-8001-000000000001",
+            "name": "Schedule Trigger",
+            "type": "n8n-nodes-base.scheduleTrigger",
+            "typeVersion": 1.2,
+            "position": [
+                240,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "read",
+                "documentId": {
+                    "__rl": true,
+                    "value": "YOUR_GOOGLE_SHEET_ID_HERE",
+                    "mode": "id"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "value": "Employees",
+                    "mode": "list"
+                },
+                "options": {}
+            },
+            "id": "a1000001-0001-4001-8001-000000000002",
+            "name": "Read Employees",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.5,
+            "position": [
+                460,
+                300
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "cond-sent-false",
+                            "leftValue": "={{ $json.sent }}",
+                            "rightValue": "",
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "false"
+                            }
+                        },
+                        {
+                            "id": "cond-status-empty",
+                            "leftValue": "={{ $json.status }}",
+                            "rightValue": "",
+                            "operator": {
+                                "type": "string",
+                                "operation": "empty"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "a1000001-0001-4001-8001-000000000003",
+            "name": "Filter Eligible",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                680,
+                300
+            ]
+        },
+        {
+            "parameters": {},
+            "id": "a1000001-0001-4001-8001-000000000018",
+            "name": "No Eligible Rows",
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                900,
+                520
+            ]
+        },
+        {
+            "parameters": {
+                "batchSize": 1,
+                "options": {}
+            },
+            "id": "a1000001-0001-4001-8001-000000000004",
+            "name": "Split In Batches",
+            "type": "n8n-nodes-base.splitInBatches",
+            "typeVersion": 3,
+            "position": [
+                900,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Validate email format and trim whitespace\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const email = (item.json.email || '').toString().trim();\n  const regex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\n  const isValid = regex.test(email);\n\n  results.push({\n    json: {\n      ...item.json,\n      email: email,\n      email_valid: isValid\n    }\n  });\n}\n\nreturn results;"
+            },
+            "id": "a1000001-0001-4001-8001-000000000005",
+            "name": "Validate Email",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1120,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "cond-email-valid",
+                            "leftValue": "={{ $json.email_valid }}",
+                            "rightValue": "",
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "true"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "a1000001-0001-4001-8001-000000000006",
+            "name": "Is Email Valid?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                1340,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "update",
+                "documentId": {
+                    "__rl": true,
+                    "value": "YOUR_GOOGLE_SHEET_ID_HERE",
+                    "mode": "id"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "value": "Employees",
+                    "mode": "list"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "email": "={{ $json.email }}",
+                        "status": "invalid_email"
+                    },
+                    "matchingColumns": [
+                        "email"
+                    ],
+                    "schema": [
+                        {
+                            "id": "email",
+                            "displayName": "email",
+                            "required": false,
+                            "defaultMatch": true,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true
+                        },
+                        {
+                            "id": "status",
+                            "displayName": "status",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": false
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "a1000001-0001-4001-8001-000000000007",
+            "name": "Mark Invalid Email",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.5,
+            "position": [
+                1560,
+                520
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "operation": "copy",
+                "fileId": {
+                    "__rl": true,
+                    "value": "YOUR_TEMPLATE_DOCUMENT_ID_HERE",
+                    "mode": "id"
+                },
+                "name": "=Offer_Letter_{{ $json.name }}",
+                "options": {}
+            },
+            "id": "a1000001-0001-4001-8001-000000000008",
+            "name": "Copy Template",
+            "type": "n8n-nodes-base.googleDrive",
+            "typeVersion": 3,
+            "position": [
+                1560,
+                300
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "jsCode": "// Merge the original employee data with the new document ID\n// This prevents data loss from Google Drive Copy overwriting payload\nconst originalData = $('Validate Email').first().json;\nconst copyResult = $input.first().json;\n\nreturn [{\n  json: {\n    name: originalData.name,\n    email: originalData.email,\n    phone_number: originalData.phone_number || '',\n    role: originalData.role,\n    department: originalData.department || '',\n    salary: originalData.salary,\n    start_date: originalData.start_date,\n    reporting_manager: originalData.reporting_manager,\n    row_number: originalData.row_number,\n    newDocId: copyResult.id,\n    newDocName: copyResult.name\n  }\n}];"
+            },
+            "id": "a1000001-0001-4001-8001-000000000009",
+            "name": "Prepare Document Data",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1780,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "update",
+                "documentId": "={{ $json.newDocId }}",
+                "actionsUi": {
+                    "actionFields": [
+                        {
+                            "action": "replaceAllText",
+                            "findText": "{{name}}",
+                            "replaceText": "={{ $json.name }}",
+                            "matchCase": false
+                        },
+                        {
+                            "action": "replaceAllText",
+                            "findText": "{{role}}",
+                            "replaceText": "={{ $json.role }}",
+                            "matchCase": false
+                        },
+                        {
+                            "action": "replaceAllText",
+                            "findText": "{{salary}}",
+                            "replaceText": "={{ $json.salary }}",
+                            "matchCase": false
+                        },
+                        {
+                            "action": "replaceAllText",
+                            "findText": "{{joining_date}}",
+                            "replaceText": "={{ $json.start_date }}",
+                            "matchCase": false
+                        },
+                        {
+                            "action": "replaceAllText",
+                            "findText": "{{reporting_manager}}",
+                            "replaceText": "={{ $json.reporting_manager }}",
+                            "matchCase": false
+                        },
+                        {
+                            "action": "replaceAllText",
+                            "findText": "{{hr_name}}",
+                            "replaceText": "Sahana",
+                            "matchCase": false
+                        },
+                        {
+                            "action": "replaceAllText",
+                            "findText": "{{hr_email}}",
+                            "replaceText": "Sahanauppala@samriddhianveshana.in",
+                            "matchCase": false
+                        }
+                    ]
+                },
+                "simple": false
+            },
+            "id": "a1000001-0001-4001-8001-000000000010",
+            "name": "Replace Placeholders",
+            "type": "n8n-nodes-base.googleDocs",
+            "typeVersion": 2,
+            "position": [
+                2000,
+                300
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "operation": "download",
+                "fileId": {
+                    "__rl": true,
+                    "value": "={{ $('Prepare Document Data').first().json.newDocId }}",
+                    "mode": "id"
+                },
+                "options": {
+                    "googleFileConversion": {
+                        "conversion": {
+                            "docsToFormat": "application/pdf"
+                        }
+                    },
+                    "fileName": "=Offer_Letter_{{ $('Prepare Document Data').first().json.name }}.pdf"
+                }
+            },
+            "id": "a1000001-0001-4001-8001-000000000011",
+            "name": "Export as PDF",
+            "type": "n8n-nodes-base.googleDrive",
+            "typeVersion": 3,
+            "position": [
+                2220,
+                300
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "fromEmail": "YOUR_HOSTINGER_SENDER_EMAIL@domain.com",
+                "toEmail": "={{ $('Prepare Document Data').first().json.email }}",
+                "subject": "=Offer Letter — {{ $('Prepare Document Data').first().json.name }} — Samriddhi Anveshana",
+                "emailType": "html",
+                "html": "=<div style=\"font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;\">\n  <div style=\"background: linear-gradient(135deg, #1a237e, #283593); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;\">\n    <h1 style=\"color: #ffffff; margin: 0; font-size: 24px;\">Samriddhi Anveshana</h1>\n  </div>\n  <div style=\"background: #ffffff; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 12px 12px;\">\n    <p style=\"font-size: 16px; color: #333;\">Dear <strong>{{ $('Prepare Document Data').first().json.name }}</strong>,</p>\n    <p style=\"font-size: 15px; color: #555; line-height: 1.6;\">We are delighted to extend an offer for the position of <strong>{{ $('Prepare Document Data').first().json.role }}</strong> at Samriddhi Anveshana.</p>\n    <p style=\"font-size: 15px; color: #555; line-height: 1.6;\">Please find your official offer letter attached to this email. Kindly review the terms and conditions outlined in the document.</p>\n    <p style=\"font-size: 15px; color: #555; line-height: 1.6;\">Your joining date is <strong>{{ $('Prepare Document Data').first().json.start_date }}</strong>. If you have any questions, feel free to reach out.</p>\n    <hr style=\"border: none; border-top: 1px solid #e0e0e0; margin: 25px 0;\">\n    <p style=\"font-size: 14px; color: #777;\">Warm regards,<br><strong>Sahana</strong><br>HR Department<br>Samriddhi Anveshana<br><a href=\"mailto:Sahanauppala@samriddhianveshana.in\" style=\"color: #1a237e;\">Sahanauppala@samriddhianveshana.in</a></p>\n  </div>\n</div>",
+                "options": {
+                    "attachments": "data"
+                }
+            },
+            "id": "a1000001-0001-4001-8001-000000000013",
+            "name": "Send Offer Email",
+            "type": "n8n-nodes-base.emailSend",
+            "typeVersion": 2.1,
+            "position": [
+                2440,
+                300
+            ],
+            "credentials": {
+                "smtp": {
+                    "id": "smtp_hostinger",
+                    "name": "Hostinger SMTP"
+                }
+            },
+            "onError": "continueRegularOutput",
+            "retryOnFail": true,
+            "maxTries": 2,
+            "waitBetweenTries": 10000
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "loose"
+                    },
+                    "conditions": [
+                        {
+                            "id": "cond-no-error",
+                            "leftValue": "={{ $json.error }}",
+                            "rightValue": "",
+                            "operator": {
+                                "type": "string",
+                                "operation": "empty"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "a1000001-0001-4001-8001-000000000014",
+            "name": "Email Sent Successfully?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                2660,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "update",
+                "documentId": {
+                    "__rl": true,
+                    "value": "YOUR_GOOGLE_SHEET_ID_HERE",
+                    "mode": "id"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "value": "Employees",
+                    "mode": "list"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "email": "={{ $('Prepare Document Data').first().json.email }}",
+                        "sent": "TRUE",
+                        "status": "sent",
+                        "sent_at": "={{ $now.toISO() }}"
+                    },
+                    "matchingColumns": [
+                        "email"
+                    ],
+                    "schema": [
+                        {
+                            "id": "email",
+                            "displayName": "email",
+                            "required": false,
+                            "defaultMatch": true,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true
+                        },
+                        {
+                            "id": "sent",
+                            "displayName": "sent",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": false
+                        },
+                        {
+                            "id": "status",
+                            "displayName": "status",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": false
+                        },
+                        {
+                            "id": "sent_at",
+                            "displayName": "sent_at",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": false
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "a1000001-0001-4001-8001-000000000015",
+            "name": "Mark as Sent",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.5,
+            "position": [
+                2880,
+                180
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "operation": "update",
+                "documentId": {
+                    "__rl": true,
+                    "value": "YOUR_GOOGLE_SHEET_ID_HERE",
+                    "mode": "id"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "value": "Employees",
+                    "mode": "list"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "email": "={{ $('Prepare Document Data').first().json.email }}",
+                        "status": "failed",
+                        "error": "={{ $json.error?.message || $json.error || 'Email delivery failed' }}"
+                    },
+                    "matchingColumns": [
+                        "email"
+                    ],
+                    "schema": [
+                        {
+                            "id": "email",
+                            "displayName": "email",
+                            "required": false,
+                            "defaultMatch": true,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true
+                        },
+                        {
+                            "id": "status",
+                            "displayName": "status",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": false
+                        },
+                        {
+                            "id": "error",
+                            "displayName": "error",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": false
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "a1000001-0001-4001-8001-000000000016",
+            "name": "Mark as Failed",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.5,
+            "position": [
+                2880,
+                440
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "operation": "delete",
+                "fileId": {
+                    "__rl": true,
+                    "value": "={{ $('Prepare Document Data').first().json.newDocId }}",
+                    "mode": "id"
+                },
+                "options": {}
+            },
+            "id": "a1000001-0001-4001-8001-000000000012",
+            "name": "Cleanup Temp Doc",
+            "type": "n8n-nodes-base.googleDrive",
+            "typeVersion": 3,
+            "position": [
+                3100,
+                300
+            ],
+            "credentials": {},
+            "onError": "continueRegularOutput"
+        },
+        {
+            "parameters": {
+                "amount": 30,
+                "unit": "seconds"
+            },
+            "id": "a1000001-0001-4001-8001-000000000017",
+            "name": "Wait 30s",
+            "type": "n8n-nodes-base.wait",
+            "typeVersion": 1.1,
+            "position": [
+                3320,
+                300
+            ],
+            "webhookId": "wait-between-batches"
+        }
+    ],
+    "connections": {
+        "Schedule Trigger": {
+            "main": [
+                [
+                    {
+                        "node": "Read Employees",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Read Employees": {
+            "main": [
+                [
+                    {
+                        "node": "Filter Eligible",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Filter Eligible": {
+            "main": [
+                [
+                    {
+                        "node": "Split In Batches",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "No Eligible Rows",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Split In Batches": {
+            "main": [
+                [
+                    {
+                        "node": "Validate Email",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                []
+            ]
+        },
+        "Validate Email": {
+            "main": [
+                [
+                    {
+                        "node": "Is Email Valid?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Is Email Valid?": {
+            "main": [
+                [
+                    {
+                        "node": "Copy Template",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Mark Invalid Email",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Mark Invalid Email": {
+            "main": [
+                [
+                    {
+                        "node": "Wait 30s",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Copy Template": {
+            "main": [
+                [
+                    {
+                        "node": "Prepare Document Data",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Prepare Document Data": {
+            "main": [
+                [
+                    {
+                        "node": "Replace Placeholders",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Replace Placeholders": {
+            "main": [
+                [
+                    {
+                        "node": "Export as PDF",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Export as PDF": {
+            "main": [
+                [
+                    {
+                        "node": "Send Offer Email",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Offer Email": {
+            "main": [
+                [
+                    {
+                        "node": "Email Sent Successfully?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Email Sent Successfully?": {
+            "main": [
+                [
+                    {
+                        "node": "Mark as Sent",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Mark as Failed",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Mark as Sent": {
+            "main": [
+                [
+                    {
+                        "node": "Cleanup Temp Doc",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Mark as Failed": {
+            "main": [
+                [
+                    {
+                        "node": "Cleanup Temp Doc",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Cleanup Temp Doc": {
+            "main": [
+                [
+                    {
+                        "node": "Wait 30s",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Wait 30s": {
+            "main": [
+                [
+                    {
+                        "node": "Split In Batches",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "active": false,
+    "settings": {
+        "timezone": "Asia/Kolkata",
+        "saveManualExecutions": true,
+        "callerPolicy": "workflowsFromSameOwner"
+    },
+    "meta": {
+        "instanceId": "workflow-for-sharing"
+    }
+}
