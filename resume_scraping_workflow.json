@@ -1,0 +1,1489 @@
+{
+    "name": "Resume Scraping - Job Application Intake V2",
+    "nodes": [
+        {
+            "parameters": {
+                "pollTimes": {
+                    "item": [
+                        {
+                            "mode": "everyX",
+                            "value": 5,
+                            "unit": "minutes"
+                        }
+                    ]
+                },
+                "mailbox": "INBOX",
+                "options": {
+                    "allowUnauthorizedCerts": false,
+                    "downloadAttachments": true,
+                    "format": "resolved"
+                }
+            },
+            "id": "b2000001-0001-4001-8001-000000000001",
+            "name": "IMAP Email Trigger",
+            "type": "n8n-nodes-base.emailReadImap",
+            "typeVersion": 2,
+            "position": [
+                240,
+                400
+            ],
+            "credentials": {
+                "imap": {
+                    "id": "imap_hostinger",
+                    "name": "Hostinger IMAP"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "// NODE 1B — Prepare email fields for downstream nodes\nconst item = $input.first();\nconst email_from = item.json.from?.value?.[0]?.address || item.json.from || '';\nconst email_subject = item.json.subject || '';\nconst email_body = (item.json.text || item.json.html || '').slice(0, 1500);\nconst attachments = item.json.attachments || [];\nconst received_at = item.json.date || new Date().toISOString();\n\nreturn [{\n  json: {\n    email_from,\n    email_subject,\n    email_body,\n    attachments,\n    received_at\n  },\n  binary: item.binary\n}];"
+            },
+            "id": "b2000001-0001-4001-8001-000000000001b",
+            "name": "Prepare Email Fields",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                460,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.groq.com/openai/v1/chat/completions",
+                "authentication": "predefinedCredentialType",
+                "nodeCredentialType": "groqApi",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "contentType": "json",
+                "body": {
+                    "model": "llama-3.3-70b-versatile",
+                    "temperature": 0,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are an HR email classifier. Read the email below and determine:\n1. Is this a job application? (true/false)\n2. If yes, what role are they applying for? (exact string or \"unknown\")\n3. Your confidence score (0.0 to 1.0)\n\nRespond ONLY in JSON with no markdown: {\"is_job_application\": bool, \"applied_role\": string, \"confidence\": float}"
+                        },
+                        {
+                            "role": "user",
+                            "content": "=Subject: {{ $json.email_subject }}\n\nBody: {{ $json.email_body }}"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000002",
+            "name": "AI Classify Email",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                680,
+                400
+            ],
+            "credentials": {
+                "groqApi": {
+                    "id": "groq_api",
+                    "name": "Groq API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "// Parse AI JSON response and merge with email context\nconst raw = $input.first().json.choices?.[0]?.message?.content || '{}';\nlet parsed;\ntry {\n  parsed = JSON.parse(raw);\n} catch (e) {\n  parsed = { is_job_application: false, applied_role: 'unknown', confidence: 0 };\n}\n\nconst email_ctx = $('Prepare Email Fields').first().json;\n\nreturn [{\n  json: {\n    ...email_ctx,\n    is_job_application: parsed.is_job_application === true,\n    applied_role: parsed.applied_role || 'unknown',\n    confidence: parseFloat(parsed.confidence) || 0\n  },\n  binary: $('Prepare Email Fields').first().binary\n}];"
+            },
+            "id": "b2000001-0001-4001-8001-000000000002p",
+            "name": "Parse Classification",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                900,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": false,
+                        "leftValue": "",
+                        "typeValidation": "loose"
+                    },
+                    "conditions": [
+                        {
+                            "id": "cond-is-application",
+                            "leftValue": "={{ $json.is_job_application }}",
+                            "rightValue": true,
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "true"
+                            }
+                        },
+                        {
+                            "id": "cond-confidence",
+                            "leftValue": "={{ $json.confidence }}",
+                            "rightValue": 0.85,
+                            "operator": {
+                                "type": "number",
+                                "operation": "gte"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000003",
+            "name": "Confidence Gate",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                1120,
+                400
+            ]
+        },
+        {
+            "parameters": {},
+            "id": "b2000001-0001-4001-8001-000000000003a",
+            "name": "Ignore Non-Applicant (Silent Drop)",
+            "type": "n8n-nodes-base.noOp",
+            "typeVersion": 1,
+            "position": [
+                1340,
+                600
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "append",
+                "documentId": {
+                    "__rl": true,
+                    "value": "YOUR_APPLICATIONS_SHEET_ID_HERE",
+                    "mode": "id"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "value": "Applications",
+                    "mode": "list"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "email": "={{ $json.email_from }}",
+                        "applied_role": "={{ $json.applied_role }}",
+                        "applied_at": "={{ $now.toISO() }}",
+                        "status": "low_confidence",
+                        "hr_review": "TRUE",
+                        "source_email": "={{ $json.email_from }}"
+                    }
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000003b",
+            "name": "Log Low Confidence",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.5,
+            "position": [
+                1340,
+                780
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "jsCode": "// NODE 4/5 — Attachment Type Filter + Existence Check\nconst ALLOWED_MIME_TYPES = [\n  'application/pdf',\n  'application/msword',\n  'application/vnd.openxmlformats-officedocument.wordprocessingml.document'\n];\n\nconst allData = $input.first();\nconst rawAttachments = allData.json.attachments || [];\n\n// Filter to only valid resume MIME types\nconst validAttachments = rawAttachments.filter(a =>\n  ALLOWED_MIME_TYPES.includes((a.contentType || a.mimeType || '').toLowerCase())\n);\n\nconst hasValidAttachment = validAttachments.length > 0;\n\nreturn [{\n  json: {\n    ...allData.json,\n    attachments: validAttachments,\n    has_valid_attachment: hasValidAttachment,\n    first_attachment_name: validAttachments[0]?.filename || null,\n    first_attachment_key: validAttachments[0]?.id || Object.keys(allData.binary || {})[0] || null\n  },\n  binary: allData.binary\n}];"
+            },
+            "id": "b2000001-0001-4001-8001-000000000004",
+            "name": "Attachment Type Filter",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1340,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "cond-has-attachment",
+                            "leftValue": "={{ $json.has_valid_attachment }}",
+                            "rightValue": "",
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "true"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000005",
+            "name": "Has Valid Attachment?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                1560,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "append",
+                "documentId": {
+                    "__rl": true,
+                    "value": "YOUR_APPLICATIONS_SHEET_ID_HERE",
+                    "mode": "id"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "value": "Applications",
+                    "mode": "list"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "email": "={{ $json.email_from }}",
+                        "applied_role": "={{ $json.applied_role }}",
+                        "applied_at": "={{ $now.toISO() }}",
+                        "status": "no_resume",
+                        "source_email": "={{ $json.email_from }}",
+                        "hr_review": "FALSE"
+                    }
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000005b",
+            "name": "Log No Resume",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.5,
+            "position": [
+                1780,
+                600
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "fromEmail": "YOUR_HOSTINGER_SENDER_EMAIL@domain.com",
+                "toEmail": "={{ $json.email_from }}",
+                "subject": "Re: {{ $json.email_subject }} — Resume Missing",
+                "emailType": "html",
+                "html": "<div style=\"font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;\">\n  <div style=\"background: linear-gradient(135deg, #1a237e, #283593); padding: 25px; border-radius: 10px 10px 0 0; text-align: center;\">\n    <h1 style=\"color: #ffffff; margin: 0; font-size: 20px;\">Samriddhi Anveshana</h1>\n  </div>\n  <div style=\"background: #ffffff; padding: 25px; border: 1px solid #e0e0e0; border-radius: 0 0 10px 10px;\">\n    <p style=\"font-size: 15px; color: #333;\">Dear Applicant,</p>\n    <p style=\"font-size: 14px; color: #555;\">We received your application email for <strong>{{ $json.applied_role }}</strong>, but we were unable to find a resume attachment (PDF or Word document).</p>\n    <p style=\"font-size: 14px; color: #555;\">Please reply to this email with your resume attached (PDF or DOCX format) to complete your application.</p>\n    <p style=\"font-size: 13px; color: #777;\">Warm regards,<br><strong>HR Team</strong><br>Samriddhi Anveshana</p>\n  </div>\n</div>",
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000005c",
+            "name": "Reply Please Resend Resume",
+            "type": "n8n-nodes-base.emailSend",
+            "typeVersion": 2.1,
+            "position": [
+                2000,
+                600
+            ],
+            "credentials": {
+                "smtp": {
+                    "id": "smtp_hostinger",
+                    "name": "Hostinger SMTP"
+                }
+            },
+            "onError": "continueRegularOutput"
+        },
+        {
+            "parameters": {
+                "operation": "pdf",
+                "binaryPropertyName": "={{ $json.first_attachment_key || 'attachment_0' }}"
+            },
+            "id": "b2000001-0001-4001-8001-000000000006",
+            "name": "Extract Text From File",
+            "type": "n8n-nodes-base.extractFromFile",
+            "typeVersion": 1,
+            "position": [
+                1780,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// NODE 6b — Validate extracted text length\nconst emailCtx = $('Attachment Type Filter').first().json;\nconst extracted = $input.first().json;\nconst text = (extracted.text || extracted.data || '').toString().trim();\nconst text_valid = text.length >= 100;\n\nreturn [{\n  json: {\n    ...emailCtx,\n    resume_raw_text: text,\n    text_valid\n  }\n}];"
+            },
+            "id": "b2000001-0001-4001-8001-000000000006b",
+            "name": "Validate Text Length",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2000,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "cond-text-valid",
+                            "leftValue": "={{ $json.text_valid }}",
+                            "rightValue": "",
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "true"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000006c",
+            "name": "Is Text Readable?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                2220,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "append",
+                "documentId": {
+                    "__rl": true,
+                    "value": "YOUR_APPLICATIONS_SHEET_ID_HERE",
+                    "mode": "id"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "value": "Applications",
+                    "mode": "list"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "email": "={{ $json.email_from }}",
+                        "applied_role": "={{ $json.applied_role }}",
+                        "applied_at": "={{ $now.toISO() }}",
+                        "status": "parse_failed",
+                        "error_reason": "unreadable_resume",
+                        "source_email": "={{ $json.email_from }}",
+                        "hr_review": "TRUE"
+                    }
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000006d",
+            "name": "Log Parse Failed (Unreadable)",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.5,
+            "position": [
+                2440,
+                600
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "fromEmail": "YOUR_HOSTINGER_SENDER_EMAIL@domain.com",
+                "toEmail": "YOUR_HR_EMAIL@domain.com",
+                "subject": "⚠️ Resume Parse Failed — {{ $json.email_from }}",
+                "emailType": "html",
+                "html": "<div style=\"font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; padding: 20px;\">\n  <div style=\"background: #b71c1c; padding: 20px; border-radius: 8px 8px 0 0;\">\n    <h2 style=\"color: #fff; margin: 0;\">⚠️ Resume Parsing Failed</h2>\n  </div>\n  <div style=\"background: #fff; padding: 20px; border: 1px solid #e0e0e0; border-radius: 0 0 8px 8px;\">\n    <p><strong>Sender:</strong> {{ $json.email_from }}</p>\n    <p><strong>Applied Role:</strong> {{ $json.applied_role }}</p>\n    <p><strong>Received:</strong> {{ $json.received_at }}</p>\n    <p style=\"color: #b71c1c;\">The resume attached could not be read (possibly a scanned image or corrupted file). Manual processing is required.</p>\n  </div>\n</div>",
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000006e",
+            "name": "HR Alert Parse Failed",
+            "type": "n8n-nodes-base.emailSend",
+            "typeVersion": 2.1,
+            "position": [
+                2660,
+                600
+            ],
+            "credentials": {
+                "smtp": {
+                    "id": "smtp_hostinger",
+                    "name": "Hostinger SMTP"
+                }
+            },
+            "onError": "continueRegularOutput"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.groq.com/openai/v1/chat/completions",
+                "authentication": "predefinedCredentialType",
+                "nodeCredentialType": "groqApi",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "contentType": "json",
+                "body": {
+                    "model": "llama-3.3-70b-versatile",
+                    "temperature": 0,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "Extract the following fields from this resume text.\nRespond ONLY in JSON with no markdown and these exact keys:\n{\n  \"name\": string,\n  \"email\": string,\n  \"phone\": string,\n  \"applied_role\": string,\n  \"total_experience_years\": number,\n  \"current_or_last_company\": string,\n  \"highest_education\": string,\n  \"key_skills\": [array of strings max 10],\n  \"resume_summary\": string\n}\nIf a field is not found use null."
+                        },
+                        {
+                            "role": "user",
+                            "content": "={{ $json.resume_raw_text.slice(0, 3000) }}"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000007",
+            "name": "AI Parse Resume",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                2440,
+                400
+            ],
+            "credentials": {
+                "groqApi": {
+                    "id": "groq_api",
+                    "name": "Groq API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "// NODE 8 — Validate Required Fields from parsed resume\nconst emailCtx = $('Validate Text Length').first().json;\nconst aiRaw = $input.first().json.choices?.[0]?.message?.content || '{}';\n\nlet parsed;\ntry {\n  parsed = JSON.parse(aiRaw);\n} catch (e) {\n  parsed = {};\n}\n\n// Node 2 classifier role TAKES PRIORITY over resume-parsed role\nconst canonical_role = emailCtx.applied_role || parsed.applied_role || 'unknown';\n\nconst required = ['name', 'email', 'applied_role'];\nconst missing = required.filter(f => !parsed[f] || parsed[f] === null);\nconst parse_valid = missing.length === 0;\n\nreturn [{\n  json: {\n    ...emailCtx,\n    name: parsed.name || null,\n    email: parsed.email || emailCtx.email_from,\n    phone: parsed.phone || null,\n    applied_role: canonical_role,\n    total_experience_years: parsed.total_experience_years || null,\n    current_or_last_company: parsed.current_or_last_company || null,\n    highest_education: parsed.highest_education || null,\n    key_skills: parsed.key_skills || [],\n    resume_summary: parsed.resume_summary || null,\n    parse_valid,\n    missing_fields: missing\n  }\n}];"
+            },
+            "id": "b2000001-0001-4001-8001-000000000008",
+            "name": "Validate Parsed Fields",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                2660,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "cond-parse-valid",
+                            "leftValue": "={{ $json.parse_valid }}",
+                            "rightValue": "",
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "true"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000008a",
+            "name": "Parse Valid? (Fields Gate)",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                2880,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "append",
+                "documentId": {
+                    "__rl": true,
+                    "value": "YOUR_APPLICATIONS_SHEET_ID_HERE",
+                    "mode": "id"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "value": "Applications",
+                    "mode": "list"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "email": "={{ $json.email_from }}",
+                        "applied_role": "={{ $json.applied_role }}",
+                        "applied_at": "={{ $now.toISO() }}",
+                        "status": "parse_failed",
+                        "error_reason": "required_fields_missing",
+                        "source_email": "={{ $json.email_from }}",
+                        "hr_review": "TRUE"
+                    }
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000008a_log",
+            "name": "Log Parse Failed (Fields Missing)",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.5,
+            "position": [
+                3100,
+                600
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "operation": "read",
+                "documentId": {
+                    "__rl": true,
+                    "value": "YOUR_APPLICATIONS_SHEET_ID_HERE",
+                    "mode": "id"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "value": "Applications",
+                    "mode": "list"
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000008b",
+            "name": "Read Apps for Duplicate Check",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.5,
+            "position": [
+                3100,
+                400
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "jsCode": "// NODE 8b — Duplicate Check: email + role already in Applications Sheet\nconst candidate = $('Validate Parsed Fields').first().json;\nconst allRows = $input.all();\n\nconst candidateEmail = (candidate.email || '').toLowerCase().trim();\nconst candidateRole = (candidate.applied_role || '').toLowerCase().trim();\n\nconst duplicate = allRows.find(r => {\n  const rowEmail = (r.json.email || '').toLowerCase().trim();\n  const rowRole = (r.json.applied_role || '').toLowerCase().trim();\n  return rowEmail === candidateEmail && rowRole === candidateRole;\n});\n\nconst is_duplicate = !!duplicate;\nconst original_applied_at = duplicate?.json?.applied_at || null;\n\nreturn [{\n  json: {\n    ...candidate,\n    is_duplicate,\n    original_applied_at\n  }\n}];"
+            },
+            "id": "b2000001-0001-4001-8001-000000000008b_code",
+            "name": "Evaluate Duplicate",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                3320,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "cond-is-duplicate",
+                            "leftValue": "={{ $json.is_duplicate }}",
+                            "rightValue": "",
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "false"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000008c",
+            "name": "Is Not Duplicate?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                3540,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "fromEmail": "YOUR_HOSTINGER_SENDER_EMAIL@domain.com",
+                "toEmail": "={{ $json.email }}",
+                "subject": "Re: Your Application for {{ $json.applied_role }}",
+                "emailType": "html",
+                "html": "<div style=\"font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;\">\n  <div style=\"background: linear-gradient(135deg, #1a237e, #283593); padding: 25px; border-radius: 10px 10px 0 0; text-align: center;\">\n    <h1 style=\"color: #ffffff; margin: 0; font-size: 20px;\">Samriddhi Anveshana</h1>\n  </div>\n  <div style=\"background: #ffffff; padding: 25px; border: 1px solid #e0e0e0; border-radius: 0 0 10px 10px;\">\n    <p style=\"font-size: 15px; color: #333;\">Dear <strong>{{ $json.name }}</strong>,</p>\n    <p style=\"font-size: 14px; color: #555;\">We already have your application for <strong>{{ $json.applied_role }}</strong> on record{{ $json.original_applied_at ? ' (received on ' + $json.original_applied_at + ')' : '' }}. There's no need to reapply — we'll be in touch!</p>\n    <p style=\"font-size: 13px; color: #777;\">Warm regards,<br><strong>HR Team</strong><br>Samriddhi Anveshana</p>\n  </div>\n</div>",
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000008d",
+            "name": "Reply Already Received",
+            "type": "n8n-nodes-base.emailSend",
+            "typeVersion": 2.1,
+            "position": [
+                3760,
+                600
+            ],
+            "credentials": {
+                "smtp": {
+                    "id": "smtp_hostinger",
+                    "name": "Hostinger SMTP"
+                }
+            },
+            "onError": "continueRegularOutput"
+        },
+        {
+            "parameters": {
+                "jsCode": "// NODE 9 — Role Config Check (case-insensitive, EC4 fix applied)\n// To add/remove roles or change slot counts, update OPENINGS below.\nconst OPENINGS = {\n  'software engineer': 2,\n  'hr executive': 1,\n  'marketing lead': 1,\n  'data analyst': 0   // 0 = closed\n};\n\nconst raw_role = $json.applied_role || 'unknown';\nconst role = raw_role.toLowerCase().trim();\n\nconst slots = OPENINGS[role];\nconst role_exists = slots !== undefined;\nconst role_open = role_exists && slots > 0;\n\nreturn [{\n  json: {\n    ...$json,\n    applied_role_normalized: role,\n    role_slots: slots ?? 0,\n    role_exists,\n    role_open\n  }\n}];"
+            },
+            "id": "b2000001-0001-4001-8001-000000000009",
+            "name": "Role Config Check",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                3760,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "cond-role-open",
+                            "leftValue": "={{ $json.role_open }}",
+                            "rightValue": "",
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "true"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000009a",
+            "name": "Is Role Open?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                3980,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "append",
+                "documentId": {
+                    "__rl": true,
+                    "value": "YOUR_APPLICATIONS_SHEET_ID_HERE",
+                    "mode": "id"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "value": "Applications",
+                    "mode": "list"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "email": "={{ $json.email }}",
+                        "applied_role": "={{ $json.applied_role_normalized }}",
+                        "applied_at": "={{ $now.toISO() }}",
+                        "status": "role_not_open",
+                        "source_email": "={{ $json.email_from }}",
+                        "hr_review": "FALSE"
+                    }
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000009b",
+            "name": "Log Role Not Open",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.5,
+            "position": [
+                4200,
+                600
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "fromEmail": "YOUR_HOSTINGER_SENDER_EMAIL@domain.com",
+                "toEmail": "={{ $json.email }}",
+                "subject": "Re: Your Application for {{ $json.applied_role }}",
+                "emailType": "html",
+                "html": "<div style=\"font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;\">\n  <div style=\"background: linear-gradient(135deg, #1a237e, #283593); padding: 25px; border-radius: 10px 10px 0 0; text-align: center;\">\n    <h1 style=\"color: #ffffff; margin: 0; font-size: 20px;\">Samriddhi Anveshana</h1>\n  </div>\n  <div style=\"background: #ffffff; padding: 25px; border: 1px solid #e0e0e0; border-radius: 0 0 10px 10px;\">\n    <p style=\"font-size: 15px; color: #333;\">Dear <strong>{{ $json.name }}</strong>,</p>\n    <p style=\"font-size: 14px; color: #555;\">Thank you for your interest in the <strong>{{ $json.applied_role }}</strong> position at Samriddhi Anveshana. Unfortunately, we do not have any openings for this role at this time.</p>\n    <p style=\"font-size: 14px; color: #555;\">We will keep your profile on file and reach out if a suitable opportunity arises in the future.</p>\n    <p style=\"font-size: 13px; color: #777;\">Warm regards,<br><strong>HR Team</strong><br>Samriddhi Anveshana</p>\n  </div>\n</div>",
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000009c",
+            "name": "Reply No Openings",
+            "type": "n8n-nodes-base.emailSend",
+            "typeVersion": 2.1,
+            "position": [
+                4420,
+                600
+            ],
+            "credentials": {
+                "smtp": {
+                    "id": "smtp_hostinger",
+                    "name": "Hostinger SMTP"
+                }
+            },
+            "onError": "continueRegularOutput"
+        },
+        {
+            "parameters": {
+                "operation": "append",
+                "documentId": {
+                    "__rl": true,
+                    "value": "YOUR_APPLICATIONS_SHEET_ID_HERE",
+                    "mode": "id"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "value": "Applications",
+                    "mode": "list"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "name": "={{ $json.name }}",
+                        "email": "={{ $json.email }}",
+                        "phone": "={{ $json.phone }}",
+                        "applied_role": "={{ $json.applied_role_normalized }}",
+                        "experience_years": "={{ $json.total_experience_years }}",
+                        "current_company": "={{ $json.current_or_last_company }}",
+                        "education": "={{ $json.highest_education }}",
+                        "skills": "={{ ($json.key_skills || []).join(', ') }}",
+                        "resume_summary": "={{ $json.resume_summary }}",
+                        "applied_at": "={{ $now.toISO() }}",
+                        "source_email": "={{ $json.email_from }}",
+                        "status": "pending",
+                        "ats_score": "",
+                        "hr_review": "FALSE"
+                    }
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000010",
+            "name": "Log to Applications Sheet",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.5,
+            "position": [
+                4200,
+                400
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "url": "https://docs.google.com/forms/d/e/YOUR_FORM_ID_HERE/formResponse",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/x-www-form-urlencoded"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "entry.1111111111",
+                            "value": "={{ $json.name }}"
+                        },
+                        {
+                            "name": "entry.2222222222",
+                            "value": "={{ $json.email }}"
+                        },
+                        {
+                            "name": "entry.3333333333",
+                            "value": "={{ $json.phone }}"
+                        },
+                        {
+                            "name": "entry.4444444444",
+                            "value": "={{ $json.applied_role_normalized }}"
+                        },
+                        {
+                            "name": "entry.5555555555",
+                            "value": "={{ $json.total_experience_years }}"
+                        },
+                        {
+                            "name": "entry.6666666666",
+                            "value": "={{ $json.resume_summary }}"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000011",
+            "name": "Submit to Google Form",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                4420,
+                400
+            ],
+            "onError": "continueRegularOutput"
+        },
+        {
+            "parameters": {
+                "operation": "read",
+                "documentId": {
+                    "__rl": true,
+                    "value": "YOUR_APPLICATIONS_SHEET_ID_HERE",
+                    "mode": "id"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "value": "Applications",
+                    "mode": "list"
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000012",
+            "name": "Read Applications for Count",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.5,
+            "position": [
+                4640,
+                400
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "jsCode": "// NODE 12 — Count selected applicants for this role and determine if slot is available\nconst candidate = $('Role Config Check').first().json;\nconst allRows = $input.all();\n\nconst role = candidate.applied_role_normalized;\nconst slots = candidate.role_slots;\n\nconst selectedCount = allRows.filter(r =>\n  (r.json.applied_role || '').toLowerCase().trim() === role &&\n  r.json.status === 'selected'\n).length;\n\nconst canSelect = selectedCount < slots;\n\nreturn [{\n  json: {\n    ...candidate,\n    selectedCount,\n    slots,\n    canSelect\n  }\n}];"
+            },
+            "id": "b2000001-0001-4001-8001-000000000012b",
+            "name": "Count Selected for Role",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                4860,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict"
+                    },
+                    "conditions": [
+                        {
+                            "id": "cond-can-select",
+                            "leftValue": "={{ $json.canSelect }}",
+                            "rightValue": "",
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "true"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000013",
+            "name": "Is Slot Available?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                5080,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "update",
+                "documentId": {
+                    "__rl": true,
+                    "value": "YOUR_APPLICATIONS_SHEET_ID_HERE",
+                    "mode": "id"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "value": "Applications",
+                    "mode": "list"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "email": "={{ $json.email }}",
+                        "status": "selected",
+                        "selected_at": "={{ $now.toISO() }}"
+                    },
+                    "matchingColumns": [
+                        "email"
+                    ],
+                    "schema": [
+                        {
+                            "id": "email",
+                            "displayName": "email",
+                            "required": false,
+                            "defaultMatch": true,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true
+                        },
+                        {
+                            "id": "status",
+                            "displayName": "status",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": false
+                        },
+                        {
+                            "id": "selected_at",
+                            "displayName": "selected_at",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": false
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000014a",
+            "name": "Update Status Selected",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.5,
+            "position": [
+                5300,
+                280
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "operation": "append",
+                "documentId": {
+                    "__rl": true,
+                    "value": "YOUR_GOOGLE_SHEET_ID_HERE",
+                    "mode": "id"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "value": "Employees",
+                    "mode": "list"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "name": "={{ $json.name }}",
+                        "email": "={{ $json.email }}",
+                        "phone_number": "={{ $json.phone }}",
+                        "role": "={{ $json.applied_role_normalized }}",
+                        "department": "",
+                        "salary": "",
+                        "start_date": "",
+                        "reporting_manager": "",
+                        "sent": "FALSE",
+                        "status": ""
+                    }
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000014b",
+            "name": "Add to Employees Sheet",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.5,
+            "position": [
+                5520,
+                280
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "operation": "update",
+                "documentId": {
+                    "__rl": true,
+                    "value": "YOUR_APPLICATIONS_SHEET_ID_HERE",
+                    "mode": "id"
+                },
+                "sheetName": {
+                    "__rl": true,
+                    "value": "Applications",
+                    "mode": "list"
+                },
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "email": "={{ $json.email }}",
+                        "status": "waitlisted",
+                        "waitlisted_at": "={{ $now.toISO() }}"
+                    },
+                    "matchingColumns": [
+                        "email"
+                    ],
+                    "schema": [
+                        {
+                            "id": "email",
+                            "displayName": "email",
+                            "required": false,
+                            "defaultMatch": true,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": true
+                        },
+                        {
+                            "id": "status",
+                            "displayName": "status",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": false
+                        },
+                        {
+                            "id": "waitlisted_at",
+                            "displayName": "waitlisted_at",
+                            "required": false,
+                            "defaultMatch": false,
+                            "display": true,
+                            "type": "string",
+                            "canBeUsedToMatch": false
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000015a",
+            "name": "Update Status Waitlisted",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4.5,
+            "position": [
+                5300,
+                560
+            ],
+            "credentials": {}
+        },
+        {
+            "parameters": {
+                "fromEmail": "YOUR_HOSTINGER_SENDER_EMAIL@domain.com",
+                "toEmail": "={{ $json.email }}",
+                "subject": "Application Received — {{ $json.applied_role }}",
+                "emailType": "html",
+                "html": "<div style=\"font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;\">\n  <div style=\"background: linear-gradient(135deg, #1a237e, #283593); padding: 25px; border-radius: 10px 10px 0 0; text-align: center;\">\n    <h1 style=\"color: #ffffff; margin: 0; font-size: 20px;\">Samriddhi Anveshana</h1>\n  </div>\n  <div style=\"background: #ffffff; padding: 25px; border: 1px solid #e0e0e0; border-radius: 0 0 10px 10px;\">\n    <p style=\"font-size: 15px; color: #333;\">Dear <strong>{{ $json.name }}</strong>,</p>\n    <p style=\"font-size: 14px; color: #555;\">Thank you for applying for the <strong>{{ $json.applied_role }}</strong> position at Samriddhi Anveshana. We have received your application and our team will review it carefully.</p>\n    <p style=\"font-size: 14px; color: #555;\">The available slot for this position has been filled for now. We have added you to our waitlist and will get in touch if a position opens up.</p>\n    <p style=\"font-size: 13px; color: #777;\">Warm regards,<br><strong>HR Team</strong><br>Samriddhi Anveshana</p>\n  </div>\n</div>",
+                "options": {}
+            },
+            "id": "b2000001-0001-4001-8001-000000000015b",
+            "name": "Reply Waitlisted",
+            "type": "n8n-nodes-base.emailSend",
+            "typeVersion": 2.1,
+            "position": [
+                5520,
+                560
+            ],
+            "credentials": {
+                "smtp": {
+                    "id": "smtp_hostinger",
+                    "name": "Hostinger SMTP"
+                }
+            },
+            "onError": "continueRegularOutput"
+        }
+    ],
+    "connections": {
+        "IMAP Email Trigger": {
+            "main": [
+                [
+                    {
+                        "node": "Prepare Email Fields",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Prepare Email Fields": {
+            "main": [
+                [
+                    {
+                        "node": "AI Classify Email",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "AI Classify Email": {
+            "main": [
+                [
+                    {
+                        "node": "Parse Classification",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Parse Classification": {
+            "main": [
+                [
+                    {
+                        "node": "Confidence Gate",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Confidence Gate": {
+            "main": [
+                [
+                    {
+                        "node": "Attachment Type Filter",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Ignore Non-Applicant (Silent Drop)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Attachment Type Filter": {
+            "main": [
+                [
+                    {
+                        "node": "Has Valid Attachment?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Has Valid Attachment?": {
+            "main": [
+                [
+                    {
+                        "node": "Extract Text From File",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Log No Resume",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Log No Resume": {
+            "main": [
+                [
+                    {
+                        "node": "Reply Please Resend Resume",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Extract Text From File": {
+            "main": [
+                [
+                    {
+                        "node": "Validate Text Length",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Validate Text Length": {
+            "main": [
+                [
+                    {
+                        "node": "Is Text Readable?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Is Text Readable?": {
+            "main": [
+                [
+                    {
+                        "node": "AI Parse Resume",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Log Parse Failed (Unreadable)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Log Parse Failed (Unreadable)": {
+            "main": [
+                [
+                    {
+                        "node": "HR Alert Parse Failed",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "AI Parse Resume": {
+            "main": [
+                [
+                    {
+                        "node": "Validate Parsed Fields",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Validate Parsed Fields": {
+            "main": [
+                [
+                    {
+                        "node": "Parse Valid? (Fields Gate)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Parse Valid? (Fields Gate)": {
+            "main": [
+                [
+                    {
+                        "node": "Read Apps for Duplicate Check",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Log Parse Failed (Fields Missing)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Read Apps for Duplicate Check": {
+            "main": [
+                [
+                    {
+                        "node": "Evaluate Duplicate",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Evaluate Duplicate": {
+            "main": [
+                [
+                    {
+                        "node": "Is Not Duplicate?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Is Not Duplicate?": {
+            "main": [
+                [
+                    {
+                        "node": "Role Config Check",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Reply Already Received",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Role Config Check": {
+            "main": [
+                [
+                    {
+                        "node": "Is Role Open?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Is Role Open?": {
+            "main": [
+                [
+                    {
+                        "node": "Log to Applications Sheet",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Log Role Not Open",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Log Role Not Open": {
+            "main": [
+                [
+                    {
+                        "node": "Reply No Openings",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Log to Applications Sheet": {
+            "main": [
+                [
+                    {
+                        "node": "Submit to Google Form",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Submit to Google Form": {
+            "main": [
+                [
+                    {
+                        "node": "Read Applications for Count",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Read Applications for Count": {
+            "main": [
+                [
+                    {
+                        "node": "Count Selected for Role",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Count Selected for Role": {
+            "main": [
+                [
+                    {
+                        "node": "Is Slot Available?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Is Slot Available?": {
+            "main": [
+                [
+                    {
+                        "node": "Update Status Selected",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Update Status Waitlisted",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Update Status Selected": {
+            "main": [
+                [
+                    {
+                        "node": "Add to Employees Sheet",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Update Status Waitlisted": {
+            "main": [
+                [
+                    {
+                        "node": "Reply Waitlisted",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "active": false,
+    "settings": {
+        "timezone": "Asia/Kolkata",
+        "saveManualExecutions": true,
+        "callerPolicy": "workflowsFromSameOwner",
+        "errorWorkflow": ""
+    },
+    "meta": {
+        "instanceId": "workflow-for-sharing"
+    }
+}
